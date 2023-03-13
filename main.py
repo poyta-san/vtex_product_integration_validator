@@ -22,10 +22,12 @@ conn_str = f"DRIVER={server_driver};SERVER={server_name};DATABASE={database_name
 cnxn = pyodbc.connect(conn_str)
 cursor = cnxn.cursor()
 
-df = pd.read_sql_query("select * from PROD_ECOM_COR_001", cnxn)
+df_sql = pd.read_sql_query("select * from PROD_ECOM_COR_001", cnxn)
 
 # Print the results
-print(df.head(2))
+print(df_sql.head(2))
+print(df_sql.columns)
+print(df_sql.head(2)['ATRIBUTO_1'])
 
 # Close the cursor and connection
 cursor.close()
@@ -43,26 +45,42 @@ headers = {
     'X-VTEX-API-AppToken': vtex_api_apptoken
     }
 
-# Get the full list of SKU ID from VTEX
-conn.request("get", "/api/catalog_system/pvt/sku/stockkeepingunitids?page=1&pagesize=10", headers=headers)
+# Get the full list of SKU ID from VTEX (WARNING CHANGE THE PAGESIZE)
+conn.request("get", "/api/catalog_system/pvt/sku/stockkeepingunitids?page=1&pagesize=600", headers=headers)
 res = conn.getresponse()
 data = res.read()
 decoded_data = data.decode("utf-8")
 skuid_list = json.loads(decoded_data)
-print(skuid_list)
+
+# print(skuid_list) # print skuid_list just for test
 sku_data_list = []
 # Get all information of each SKU ID
 for sku in skuid_list:
-    conn.request("get", "/api/catalog_system/pvt/sku/stockkeepingunitbyid/" + str(sku) + "?sc=1", headers=headers)
+    conn.request("get", "/api/catalog_system/pvt/sku/stockkeepingunitbyid/" + str(sku), headers=headers)
     res = conn.getresponse()
     skuid_data = res.read()
     decoded_skuid_data = skuid_data.decode("utf-8")
     skuid_data_converted = json.loads(decoded_skuid_data)
     sku_data_list.append(skuid_data_converted)
-
-    # df = pd.DataFrame.from_dict(skuid_data_converted, orient='index')
-    # print(df)
     
-df = pd.DataFrame(sku_data_list)
-print(df)
-print(df.columns)
+# Convert to Dataframe and normalize
+df_vtex = pd.json_normalize(sku_data_list)
+print(df_vtex.columns)
+
+# First validation
+df_product_id = df_vtex[['Id', 'ProductId', 'ProductRefId', 'AlternateIds.RefId']]
+df_product_id['AlternateIds.RefId'] = df_product_id['AlternateIds.RefId'].str[:9]
+df_product_id = df_product_id.astype(str)
+# print(df_product_id)
+# print(df_product_id.dtypes)
+
+not_equals_product_id = df_product_id[(df_product_id['ProductId'] != df_product_id['ProductRefId']) | (df_product_id['ProductId'] != df_product_id['AlternateIds.RefId']) | (df_product_id['ProductRefId'] != df_product_id['AlternateIds.RefId'])]
+if not_equals_product_id.empty:
+    print('Todos os produtos estão com as informações ProductId, ProductRefId e AlternateIds.RefId corretas')
+else: 
+    print('Os seguintes SkuIDs/Referências estão com divergência no cadastro de produto nos campos ProductId, ProductRefId e AlternateIds.RefId:')
+    print(not_equals_product_id)
+
+
+# VERIFICAR SE NA LISTA DE PRODUTOS COM ERRO APARECE O ID DO SKU TB
+# O REQUEST DE ITEM POR ITEM ESTÁ DEMORANDO MUITO, TALVEZ NÃO TENHA O QUE FAZER
